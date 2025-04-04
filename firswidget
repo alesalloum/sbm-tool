@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Interactive SBM Likelihood Grid</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        body {
+            font-family: sans-serif;
+        }
+
+        .graph-cell {
+            display: inline-block;
+            margin: 4px;
+            background-color: #eee;
+            border-radius: 6px;
+            vertical-align: top;
+        }
+
+        svg {
+            background: #f9f9f9;
+            border: 1px solid #ccc;
+        }
+
+        #controls {
+            margin: 10px;
+        }
+
+        #colorbar {
+            margin: 10px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .bar {
+            height: 20px;
+            width: 256px;
+            background: linear-gradient(to right, #ffffcc, #006400);
+            border: 1px solid #aaa;
+        }
+
+        .bar-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="controls">
+        <label id="math-display-pin">\( p_{in} = \)</label>
+        <input type="range" id="pin" min="0" max="1" step="0.01" value="0.9" />
+
+
+        &nbsp; &nbsp; &nbsp;
+
+        <label for="pout"><span id="math-display">\( p_{out} = \)</span></label>
+        <input type="range" id="pout" min="0" max="1" step="0.01" value="0.3" />
+
+    </div>
+
+    <div id="colorbar">
+        <div class="bar"></div>
+    </div>
+    <div class="bar-labels" style="width: 256px; margin-left: 10px;">
+        <span>Low likelihood</span>
+        <span>High likelihood</span>
+    </div>
+
+    <div id="grid"></div>
+
+    <script>
+        const nodes = [0, 1, 2, 3];
+        const edgesList = [
+            [0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]
+        ];
+
+        const rawPositions = {
+            0: { x: -1, y: 1 },
+            1: { x: -1, y: -1 },
+            2: { x: 1, y: 1 },
+            3: { x: 1, y: -1 },
+        };
+
+        const cellSize = 90;
+        const centerX = cellSize / 2;
+        const centerY = cellSize / 2;
+        const scale = 20;
+
+        function getPosition(n) {
+            return {
+                x: centerX + rawPositions[n].x * scale,
+                y: centerY + rawPositions[n].y * scale
+            };
+        }
+
+        function computeLikelihood(bits, pIn, pOut) {
+            const intra = [bits[0], bits[5]];
+            const inter = [bits[1], bits[2], bits[3], bits[4]];
+            const intraPresent = intra[0] + intra[1];
+            const intraMissing = 2 - intraPresent;
+            const interPresent = inter.reduce((a, b) => a + b, 0);
+            const interMissing = 4 - interPresent;
+
+            return Math.pow(pIn, intraPresent) * Math.pow(1 - pIn, intraMissing)
+                * Math.pow(pOut, interPresent) * Math.pow(1 - pOut, interMissing);
+        }
+
+        function generateGraphs() {
+            const allBits = [];
+            for (let i = 0; i < 64; i++) {
+                const bits = i.toString(2).padStart(6, '0').split('').map(Number);
+                allBits.push(bits);
+            }
+            return allBits;
+        }
+
+        const graphBits = generateGraphs();
+        const grid = d3.select("#grid");
+
+        function drawGraphs(pIn, pOut) {
+            grid.selectAll("*").remove();
+
+            const likelihoods = graphBits.map(bits => computeLikelihood(bits, pIn, pOut));
+            const min = Math.min(...likelihoods);
+            const max = Math.max(...likelihoods);
+
+            graphBits.forEach((bits, i) => {
+                const like = computeLikelihood(bits, pIn, pOut);
+                const norm = (like - min) / (max - min);
+                const color = d3.interpolateYlGn(norm);
+
+                const cell = grid.append("div")
+                    .attr("class", "graph-cell")
+                    .style("width", `${cellSize}px`)
+                    .style("height", `${cellSize + 20}px`)
+                    .style("background-color", color);
+
+                const svg = cell.append("svg")
+                    .attr("width", cellSize)
+                    .attr("height", cellSize);
+
+                // Edges
+                edgesList.forEach((e, idx) => {
+                    if (bits[idx]) {
+                        const p1 = getPosition(e[0]);
+                        const p2 = getPosition(e[1]);
+                        svg.append("line")
+                            .attr("x1", p1.x)
+                            .attr("y1", p1.y)
+                            .attr("x2", p2.x)
+                            .attr("y2", p2.y)
+                            .attr("stroke", "black")
+                            .attr("stroke-width", 1.5);
+                    }
+                });
+
+                // Nodes
+                nodes.forEach(n => {
+                    const pos = getPosition(n);
+                    svg.append("circle")
+                        .attr("cx", pos.x)
+                        .attr("cy", pos.y)
+                        .attr("r", 5)
+                        .attr("fill", n < 2 ? "red" : "blue");
+                });
+
+                // Likelihood label
+                cell.append("div")
+                    .style("text-align", "center")
+                    .style("font-size", "10px")
+                    .text(`L: ${like.toExponential(2)}`);
+            });
+        }
+
+        function getSliderValues() {
+            return {
+                pOut: parseFloat(document.getElementById("pout").value),
+                pIn: parseFloat(document.getElementById("pin").value)
+            };
+        }
+
+        const slider = document.getElementById("pout");
+        const pinSlider = document.getElementById("pin");
+
+        slider.addEventListener("input", () => {
+            const { pOut, pIn } = getSliderValues();
+            document.getElementById("math-display").innerHTML = `\\( p_{out} = ${pOut.toFixed(2)} \\)`;
+            MathJax.typeset();
+            drawGraphs(pIn, pOut);
+        });
+
+        pinSlider.addEventListener("input", () => {
+            const { pOut, pIn } = getSliderValues();
+            document.getElementById("math-display-pin").innerHTML = `\\( p_{in} = ${pIn.toFixed(2)} \\)`;
+            MathJax.typeset();
+            drawGraphs(pIn, pOut);
+        });
+
+        const { pOut, pIn } = getSliderValues();
+        document.getElementById("math-display").innerHTML = `\\( p_{out} = ${pOut.toFixed(2)} \\)`;
+        document.getElementById("math-display-pin").innerHTML = `\\( p_{in} = ${pIn.toFixed(2)} \\)`;
+        MathJax.typeset();
+
+        drawGraphs(pIn, pOut);
+    </script>
+</body>
+
+</html>
